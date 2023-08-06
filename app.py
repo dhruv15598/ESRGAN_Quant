@@ -1,6 +1,6 @@
 from model import RRDBNet
 import gradio as gr
-import numpy as np
+#import numpy as np
 import torch
 import torchvision.transforms as transforms
 
@@ -21,7 +21,7 @@ def load_weights(checkpoint_file, model):
 
 def superres(image):
     gen2 = RRDBNet(3, 3, 64, 32, 2, 0.2).to(device)
-    gen2 = load_weights("models/ensemble3/gen200.pth.tar", gen2)
+    gen2 = load_weights("gen200.pth.tar", gen2)
     gen2.eval()
     transform4 = transforms.Compose([
         transforms.RandomCrop((200, 200)),
