@@ -32,7 +32,7 @@ def superres(image):
         lr_image = lr_image.to(device)
         lr_image = lr_image.unsqueeze(0)
         sr_image2 = gen2(lr_image)
-        sr_image2 = sr_image2.cpu().numpy()
+        sr_image2 = sr_image2.cpu().squeeze(0).numpy()
     return sr_image2
 
 
