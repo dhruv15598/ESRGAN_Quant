@@ -1,5 +1,6 @@
 from model import RRDBNet
 import gradio as gr
+from PIL import Image
 import torch
 import torchvision.transforms as transforms
 
@@ -32,7 +33,8 @@ def superres(image):
         lr_image = lr_image.unsqueeze(0)
         sr_image2 = gen2(lr_image)
         sr_image2 = sr_image2.cpu()
-    return sr_image2
+        sr_image2_pil = transforms.ToPILImage()(sr_image2.squeeze(0))
+    return sr_image2_pil
 
 
 demo = gr.Interface(
