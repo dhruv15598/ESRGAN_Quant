@@ -24,7 +24,7 @@ def superres(image):
     gen2 = load_weights("gen200.pth.tar", gen2)
     gen2.eval()
     transform4 = transforms.Compose([
-        transforms.RandomCrop((400,400)),
+        transforms.RandomCrop((256,256)),
         transforms.ToTensor(),
         transforms.Normalize(mean=(0, 0, 0), std=(1, 1, 1))
     ])
