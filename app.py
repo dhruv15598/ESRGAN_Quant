@@ -32,9 +32,8 @@ def superres(image):
         lr_image = lr_image.to(device)
         lr_image = lr_image.unsqueeze(0)
         sr_image2 = gen2(lr_image)
-        sr_image2 = sr_image2.cpu()
-        sr_image2_pil = transforms.ToPILImage()(sr_image2.squeeze(0))
-    return sr_image2_pil
+        sr_image2 = sr_image2.cpu().numpy()
+    return sr_image2
 
 
 demo = gr.Interface(
