@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-# from torchinfo import summary
 
 
 class RD_block(nn.Module):
@@ -61,31 +60,38 @@ class UpsampleBlock(nn.Module):
         return self.act(self.conv(self.upsample(x)))
 
 
-class RRDBNet(nn.Module):
+class DRRRDBNet(nn.Module):
     def __init__(self, in_channels, out_channels, channels, growth_channels, upscale_factor, residual_beta):
-        super(RRDBNet, self).__init__()
+        super(DRRRDBNet, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, channels, kernel_size=3,
                                stride=1, padding=1)
-        self.res_block = nn.Sequential(*[RRD_block(channels, growth_channels, residual_beta) for _ in range(23)])
-
+        self.res_block = nn.Sequential(*[RRD_block(channels, growth_channels, residual_beta) for _ in range(6)])
+        self.res_block2 = nn.Sequential(*[RRD_block(channels, growth_channels, residual_beta) for _ in range(6)])
+        self.res_block3 = nn.Sequential(*[RRD_block(channels, growth_channels, residual_beta) for _ in range(6)])
+        self.res_block4 = nn.Sequential(*[RRD_block(channels, growth_channels, residual_beta) for _ in range(5)])
+        self.dropout = nn.Dropout(0.1)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3,
                                stride=1, padding=1)
-
         self.upsample = nn.Sequential(
             UpsampleBlock(channels, upscale_factor), UpsampleBlock(channels, upscale_factor),
         )
 
         self.conv3 = nn.Sequential(
             nn.Conv2d(channels, channels, (3, 3), (1, 1), (1, 1)),
-            nn.LeakyReLU(0.2, True)
+            nn.LeakyReLU(0.2, True),
         )
 
         self.conv4 = nn.Conv2d(channels, out_channels, (3, 3), (1, 1), (1, 1))
 
     def forward(self, x):
-        temp = x
         out1 = self.conv1(x)
-        out2 = self.conv2(self.res_block(out1))
+        t_out1 = self.res_block(out1)
+        t_out2 = self.dropout(t_out1)
+        t_out3 = self.res_block2(t_out2)
+        t_out4 = self.dropout(t_out3)
+        t_out5 = self.res_block3(t_out4)
+        t_out6 = self.dropout(t_out5)
+        out2 = self.conv2(self.res_block4(t_out6))
         out3 = torch.add(out2, out1)
         out4 = self.upsample(out3)
         out5 = self.conv3(out4)
@@ -199,6 +205,8 @@ class Discriminator(nn.Module):
         out = self.classifier(out)
 
         return out
+
+
 #############################################
 def weights_init(m):
     if isinstance(m, nn.Conv2d):
@@ -206,14 +214,3 @@ def weights_init(m):
         m.weight.data *= 0.1
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
-
-#
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# gen = RRDBNet(3, 3, 64, 32, 2, 0.2).to(device)
-# # # gen_opt = torch.optim.Adam(gen.parameters(), lr=1e-4, betas=(0.9, 0.999))
-# # # gen_model = gen.apply(weights_init)
-# summary(gen, input_size=(16, 3, 64, 64))
-# # # dis = Discriminator().to(device)
-# # # summary(dis, input_size=(16, 3, 256, 256))
-
-#############################################
