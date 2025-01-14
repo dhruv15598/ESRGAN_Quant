@@ -120,6 +120,13 @@ demo = gr.Interface(
                     <b>Usage</b>: Upload an image (or use one of the examples below) and click "Submit."
                 """
     ,
+    examples=[
+        ["example1.jpg", 5],
+        ["example2.jpg", 10],
+        ["example3.jpg", 15]
+    ]
+    ,
+    
     article =           """
                         <h3>About this Demo</h3>
                         <p>
