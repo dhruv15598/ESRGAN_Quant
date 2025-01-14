@@ -118,11 +118,8 @@ with gr.Blocks() as demo:
             image_input = gr.Image(type="pil", label="Upload an image")
             slider_input = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="MC Dropout Passes")
             
-            # Place examples directly beneath the slider.
-            gr.Markdown("### Example Images")
             gr.Examples(
-                examples=[["example1.jpg"], ["example2.jpg"]],
-                inputs=[gr.Image(type="pil", label="Upload an image")],
+                examples=[["example1.jpg"], ["example2.jpg"], ["example3.jpg"]],
                 cache_examples=False
             )
             
