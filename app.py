@@ -114,22 +114,20 @@ with gr.Blocks() as demo:
 
     # Main inputs section
     with gr.Row():
-        with gr.Column():
-            image_input = gr.Image(type="pil", label="Upload an image")
-            slider_input = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="MC Dropout Passes")
-            
+        with gr.Column(scale=1):
             gr.Examples(
                 examples=[["example1.jpg"], ["example2.jpg"], ["example3.jpg"]],
+                inputs=[gr.Image(type="pil", label="Upload an image")],
                 cache_examples=False
             )
+            slider_input = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="MC Dropout Passes")
             
             submit_btn = gr.Button("Submit")
-    
-    # Outputs section
-    with gr.Row():
-        output1 = gr.Image(type="pil", label="1) Random Crop 4x Upscaled using Bicubic")
-        output2 = gr.Image(type="pil", label="2) Super-Resolved (Mean)")
-        output3 = gr.Image(type="pil", label="3) STD Heatmap")
+
+        with gr.Column(scale=1):
+            output1 = gr.Image(type="pil", label="1) Random Crop 4x Upscaled (Bicubic)")
+            output2 = gr.Image(type="pil", label="2) Super-Resolved (Mean)")
+            output3 = gr.Image(type="pil", label="3) STD Heatmap")
     
     # Link the submit button to the function
     submit_btn.click(
