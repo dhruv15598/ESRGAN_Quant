@@ -26,7 +26,6 @@ def load_weights(checkpoint_file, model):
     print("Successfully loaded the pretrained model weights")
     return model
 
-
 gen2 = load_weights("gen174.pth.tar", gen2)
 gen2.eval()
 
@@ -35,8 +34,6 @@ def enable_dropout(model):
     for m in model.modules():
         if isinstance(m, nn.Dropout):
             m.train()
-
-
 
 def mcd_superres_crop(image, mc_passes=5):
     """
@@ -57,7 +54,7 @@ def mcd_superres_crop(image, mc_passes=5):
     lr_tensor = transform_crop(image)  # shape: (3, 200, 200)
 
     # Convert the cropped tensor to a PIL image
-    cropped_pil = F.to_pil_image(lr_tensor.clone().clamp_(0,1))
+    cropped_pil = transforms.ToPILImage()(lr_tensor.clone().clamp_(0,1))
 
     # B) Upscale the cropped patch 4× using bicubic
     w, h = cropped_pil.size
@@ -84,7 +81,7 @@ def mcd_superres_crop(image, mc_passes=5):
 
     # Convert mean SR to PIL
     mean_batch = mean_batch.squeeze(0).clamp_(0,1)  # shape (3, H, W)
-    mean_pil = F.to_pil_image(mean_batch.cpu())
+    mean_pil = transforms.ToPILImage()(mean_batch.cpu())
 
     # D) Build a STD heatmap (collapsing across channels)
     std_map = torch.mean(std_batch, dim=1)  # shape: (H, W)
@@ -103,53 +100,35 @@ def mcd_superres_crop(image, mc_passes=5):
     # Return the 4× upscaled crop, the mean SR output, and the STD heatmap
     return cropped_pil_4x, mean_pil, stdmap_pil
 
-
-demo = gr.Interface(
-    fn=mcd_superres_crop,
-    inputs=[gr.Image(type="pil", label="Upload an image"), gr.Slider(minimum=1, maximum=20, value=5 ,step=1, label="MC Dropout Passes")],
-    outputs=[
-        gr.Image(type="pil", label="1) Random Crop 4x Upscaled using bicubic interpolation"),
-        gr.Image(type="pil", label="2) Super-Resolved (Mean)"),
-        gr.Image(type="pil", label="3) STD Heatmap")
-    ],
-    title="Uncertainity Estimation for Super Resolution using ESRGAN.",
-    description = """
-                    This is the demo for our paper: <b>Uncertainity Estimation for Super Resolution using ESRGAN.</b><br/>
-                    Authors: Dr. Matias Valdenegro Toro, Dr. Marco Zullich, & Maniraj Sai.<br/>
-                    Presented at the 2025 VISAPP Conference.<br/><br/>
-                    <b>Usage</b>: Upload an image (or use one of the examples below) and click "Submit."
-                """
-    ,
+# Create the Blocks layout
+with gr.Blocks() as demo:
+    gr.Markdown("# Uncertainty Estimation for Super Resolution using ESRGAN")
     
-    article =           """
-                        <h3>About this Demo</h3>
-                        <p>
-                        This demo showcases an enhanced ESRGAN approach for image super-resolution. First, we take a 256×256 crop from the uploaded image to reduce computational load. Then, we apply a 4x upscale using our ESRGAN model, which has been modified to incorporate dropout layers. Through multiple forward passes (Monte Carlo Dropout), the demo not only produces a high-resolution output but also estimates pixelwise uncertainty. By visualizing these uncertainties in a color-coded heatmap, you can see which regions of the image the model is less confident about—an important insight for understanding model performance and reliability.
-                        </p>
-                        <h4>Citation</h4>
-                        <pre>
-                        @inproceedings{your_paper_2024,
-                        title={Uncertainity Estimation for Super Resolution using ESRGAN.},
-                        author={Dr. Matias Valdenegro Toro, Dr. Marco Zullich and Maniraj Sai Adapa},
-                        booktitle={VISAPP Conference 2025},
-                        year={2025}
-                        }
-                        </pre>
-                        """
-)
+    # Create a row for the examples and the main interface components
+    with gr.Row():
+        # Create an examples component that only takes the image input.
+        # Note: Each example is a list containing just the image path.
+        examples = gr.Examples(
+            examples=[["example1.jpg"], ["example2.jpg"],["example3.jpg"]],
+            inputs=[gr.Image(type="pil", label="Upload an image")]
+        )
+    
 
-
-examples = gr.Examples(
-    examples=[["example1.jpg"], ["example2.jpg"],["example3.jpg"]],
-    inputs=[demo.input_components[0]],  # Only associate the image component.
-    label="Examples"
-)
-
-demo_with_examples = gr.Blocks()
-
-with demo_with_examples:
-    examples.render()
-    demo.render()
+    with gr.Row():
+        with gr.Column():
+            image_input = gr.Image(type="pil", label="Upload an image")
+            slider_input = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="MC Dropout Passes")
+            submit_btn = gr.Button("Submit")
+        with gr.Column():
+            output1 = gr.Image(type="pil", label="1) Random Crop 4x Upscaled using bicubic interpolation")
+            output2 = gr.Image(type="pil", label="2) Super-Resolved (Mean)")
+            output3 = gr.Image(type="pil", label="3) STD Heatmap")
+    
+    submit_btn.click(
+        fn=mcd_superres_crop,
+        inputs=[image_input, slider_input],
+        outputs=[output1, output2, output3]
+    )
 
 if __name__ == "__main__":
-    demo_with_examples.launch()
+    demo.launch()
