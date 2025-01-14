@@ -120,12 +120,6 @@ demo = gr.Interface(
                     <b>Usage</b>: Upload an image (or use one of the examples below) and click "Submit."
                 """
     ,
-    examples=[
-        ["example1.jpg", 5],
-        ["example2.jpg", 10],
-        ["example3.jpg", 15]
-    ]
-    ,
     
     article =           """
                         <h3>About this Demo</h3>
@@ -136,7 +130,7 @@ demo = gr.Interface(
                         <pre>
                         @inproceedings{your_paper_2024,
                         title={Uncertainity Estimation for Super Resolution using ESRGAN.},
-                        author={Matias Valdenegro Toro, Dr. Marco Zullich and Maniraj Sai Adapa},
+                        author={Dr. Matias Valdenegro Toro, Dr. Marco Zullich and Maniraj Sai Adapa},
                         booktitle={VISAPP Conference 2025},
                         year={2025}
                         }
@@ -144,5 +138,18 @@ demo = gr.Interface(
                         """
 )
 
+
+examples = gr.Examples(
+    examples=[["example1.jpg"], ["example2.jpg"],["example3.jpg"]],
+    inputs=[demo.input_components[0]],  # Only associate the image component.
+    label="Examples"
+)
+
+demo_with_examples = gr.Blocks()
+
+with demo_with_examples:
+    examples.render()
+    demo.render()
+
 if __name__ == "__main__":
-    demo.launch()
+    demo_with_examples.launch()
