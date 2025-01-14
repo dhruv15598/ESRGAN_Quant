@@ -148,7 +148,7 @@ with gr.Blocks() as demo:
         
         **Citation:**  
         ```
-        @inproceedings{your_paper_2024,
+        @inproceedings{valdenegro_esrgan_2025,
           title={Uncertainty Estimation for Super Resolution using ESRGAN.},
           author={Dr. Valdenegro Toro, Matias and Dr. Zullich, Marco and Adapa, Maniraj Sai},
           booktitle={VISAPP Conference 2025},
