@@ -115,9 +115,10 @@ with gr.Blocks() as demo:
     # Main inputs section
     with gr.Row():
         with gr.Column(scale=1):
+            image_input = gr.Image(type="pil", label="Upload an image")
             gr.Examples(
                 examples=[["example1.jpg"], ["example2.jpg"], ["example3.jpg"]],
-                inputs=[gr.Image(type="pil", label="Upload an image")],
+                inputs=[image_input],
                 cache_examples=False
             )
             slider_input = gr.Slider(minimum=1, maximum=20, value=5, step=1, label="MC Dropout Passes")
