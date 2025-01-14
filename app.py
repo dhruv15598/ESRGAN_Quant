@@ -115,7 +115,7 @@ demo = gr.Interface(
     title="Uncertainity Estimation for Super Resolution using ESRGAN.",
     description = """
                     This is the demo for our paper: <b>Uncertainity Estimation for Super Resolution using ESRGAN.</b><br/>
-                    Authors: Matias Valdenegro Toro, John Smith, & Maniraj Sai.<br/>
+                    Authors: Dr. Matias Valdenegro Toro, Dr. Marco Zullich, & Maniraj Sai.<br/>
                     Presented at the 2025 VISAPP Conference.<br/><br/>
                     <b>Usage</b>: Upload an image (or use one of the examples below) and click "Submit."
                 """
@@ -129,7 +129,7 @@ demo = gr.Interface(
                         <pre>
                         @inproceedings{your_paper_2024,
                         title={Uncertainity Estimation for Super Resolution using ESRGAN.},
-                        author={Matias Valdenegro Toro, John Smith and Maniraj Sai Adapa},
+                        author={Matias Valdenegro Toro, Dr. Marco Zullich and Maniraj Sai Adapa},
                         booktitle={VISAPP Conference 2025},
                         year={2025}
                         }
