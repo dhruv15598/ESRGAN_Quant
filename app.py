@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from torchvision import transforms
 import torchvision.transforms.functional as F
-from model import DRRRDBNet
+from esrgan_dropout import DRRRDBNet
 
 # Setup device and model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
