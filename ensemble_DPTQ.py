@@ -101,9 +101,9 @@ if __name__ == "__main__":
     # --- Argument for the directory containing ensemble model subdirectories ---
     parser.add_argument('--weights_dir', type=str, default='mySRGAN/model_weights_ensemble',
                         help='Path to the directory containing ensemble model folders (model1, model2, ...)')
-    parser.add_argument('--output_sr', type=str, default='output_ensemble_sr.png',
+    parser.add_argument('--output_sr', type=str, default='output_ensemble_sr_ptdq.png',
                         help='Path to save the super-resolved image')
-    parser.add_argument('--output_uq', type=str, default='output_ensemble_uq_heatmap.png',
+    parser.add_argument('--output_uq', type=str, default='output_ensemble_uq_heatmap_ptdq.png',
                         help='Path to save the uncertainty heatmap')
     parser.add_argument('--crop_size', type=int, default=None,
                         help='Optional size to center crop the input image (e.g., 200)')
@@ -130,14 +130,36 @@ if __name__ == "__main__":
     ensemble_models = []
     for i, weight_file in enumerate(model_weight_files):
         print(f"\nLoading Ensemble Member {i + 1}/{num_ensemble_models}")
-        # Use the standard RRDBNet definition
-        model = RRDBNet(in_channels=3, out_channels=3, channels=64,
-                        growth_channels=32, upscale_factor=2,  # Should result in 4x total upscale
-                        residual_beta=0.2)
-        model = load_weights(weight_file, model, device)
-        model.to(device)
-        model.eval()  # Set each model to eval mode
-        ensemble_models.append(model)
+        # 1. Instantiate the FP32 model
+        fp32_model = RRDBNet(in_channels=3, out_channels=3, channels=64,
+                             growth_channels=32, upscale_factor=2,
+                             residual_beta=0.2)
+
+        # 2. Load weights into the FP32 model (use initial device)
+        fp32_model = load_weights(weight_file, fp32_model, device)
+        fp32_model.eval()
+
+        # 3. Apply Quantization if enabled
+        if args.quantize:
+            print(f"  Applying Dynamic Quantization to Member {i + 1}...")
+            # Ensure model is on CPU for dynamic quantization step
+            fp32_model.to('cpu')
+            layers_to_quantize = {nn.Conv2d}
+            quantized_model = torch.quantization.quantize_dynamic(
+                model=fp32_model,
+                qconfig_spec=layers_to_quantize,
+                dtype=torch.qint8
+            )
+            # The model to add to the list is the quantized one
+            inference_model = quantized_model
+            print(f"  Dynamic Quantization applied for Member {i + 1}.")
+        else:
+            # Otherwise, the model to add is the original FP32 one
+            inference_model = fp32_model
+
+        # 4. Ensure the final model is on the correct device and add to list
+        inference_model.to(device)  # Move to CPU if quantizing, or original device if not
+        ensemble_models.append(inference_model)
 
     # Load and preprocess the input image
     input_image = Image.open(args.input).convert("RGB")
@@ -150,32 +172,51 @@ if __name__ == "__main__":
     lr_tensor = preprocess(input_image).unsqueeze(0).to(device)
     print(f"\nInput tensor shape: {lr_tensor.shape}")
 
-    # --- Perform Ensemble Inference ---
+    # --- Perform Ensemble Inference with Precise Timing ---
     print(f"Running inference for {num_ensemble_models} ensemble members...")
-    start_time = time.time()
     sr_outputs = []
-    with torch.no_grad():  # Single no_grad context is sufficient
+    total_model_call_time = 0.0  # Accumulator for model call duration
+    overall_start_time = time.time()  # Keep track of overall loop time
+
+    with torch.no_grad():
         for i, model in enumerate(ensemble_models):
             print(f"  Inferencing with model {i + 1}/{num_ensemble_models}...")
+            # --- Time only the model call ---
+            iter_start_time = time.time()
             sr_out = model(lr_tensor)
-            # Move result to CPU to avoid accumulating GPU memory
+            iter_end_time = time.time()
+            total_model_call_time += (iter_end_time - iter_start_time)
+            # -------------------------------
+            # Move result to CPU after timing
             sr_outputs.append(sr_out.cpu())
 
-    end_time = time.time()
-    print(f"Ensemble inference finished in {end_time - start_time:.2f} seconds.")
+    overall_end_time = time.time()
+    overall_duration = overall_end_time - overall_start_time
+
+    # --- Updated Timing Report ---
+    if num_ensemble_models > 0:
+        avg_model_call_time_per_member = total_model_call_time / num_ensemble_models
+        avg_overall_time_per_member = overall_duration / num_ensemble_models  # Previous calculation method
+        print(f"\nInference Timing Report:")
+        print(f"  Total time for loop execution: {overall_duration:.4f} seconds.")
+        print(f"  Total accumulated model call time: {total_model_call_time:.4f} seconds.")
+        # --- Report per member averages ---
+        print(f"  Average overall time per member: {avg_overall_time_per_member:.4f} seconds.")
+        print(f"  Average model call time per member: {avg_model_call_time_per_member:.4f} seconds.")
+    else:
+        print(f"\nInference Timing Report:")
+        print(f"  Total time for loop execution: {overall_duration:.4f} seconds. (No members run)")
+        print(f"  Total accumulated model call time: {total_model_call_time:.4f} seconds.")
 
     # --- Stack results and calculate mean and standard deviation ---
-    # Ensure stacking happens on CPU
-    stacked_sr = torch.stack(sr_outputs, dim=0)  # Shape: (N, B, C, H, W) where N=num_ensemble_models, B=1
+    # ... (Aggregation remains the same) ...
+    stacked_sr = torch.stack(sr_outputs, dim=0)
+    mean_sr = torch.mean(stacked_sr, dim=0)
+    std_sr = torch.std(stacked_sr, dim=0)
+    uncertainty_map = torch.mean(std_sr, dim=1)
 
-    mean_sr = torch.mean(stacked_sr, dim=0)  # Shape: (B, C, H, W)
-    std_sr = torch.std(stacked_sr, dim=0)  # Shape: (B, C, H, W)
-
-    # Calculate uncertainty map (mean std across channels)
-    uncertainty_map = torch.mean(std_sr, dim=1)  # Shape: (B, H, W) B=1 here
-
-    # Save outputs
+    # --- Save Outputs (Unchanged, maybe uncomment) ---
     save_tensor_as_image(mean_sr, args.output_sr)
-    save_std_heatmap(uncertainty_map, args.output_uq, colormap='viridis')  # Specify colormap if desired
+    save_std_heatmap(uncertainty_map, args.output_uq, colormap='viridis')
 
     print("\nProcessing complete.")

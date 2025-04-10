@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.profiler
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -116,7 +117,8 @@ if __name__ == "__main__":
     parser.add_argument('--cpu', action='store_true', help='Force use CPU even if CUDA is available')
     # Add quantization argument
     parser.add_argument('--quantize', action='store_true', help='Apply Post-Training Dynamic Quantization (forces CPU)')
-
+    parser.add_argument('--print_model', action='store_true', help='Print the model structure after setup')
+    parser.add_argument('--profile', action='store_true', help='Enable profiler for the first inference pass')
     args = parser.parse_args()
 
     # --- Device Setup ---
@@ -141,6 +143,7 @@ if __name__ == "__main__":
     fp32_model = load_weights(args.weights, fp32_model, device)  # Load to target device initially
     fp32_model.eval()  # Set to eval mode initially
 
+
     # --- Apply Dynamic Quantization (if enabled) ---
     if args.quantize:
         print("Applying Post-Training Dynamic Quantization...")
@@ -158,17 +161,28 @@ if __name__ == "__main__":
         print("Dynamic Quantization applied.")
         # The model used for inference is now the quantized one
         model = quantized_model
-        model.to(device)  # Ensure the final model is on the chosen device (CPU)
+        model.to(device)
 
     else:
         # Use the original FP32 model if quantization is not enabled
         model = fp32_model
         model.to(device)  # Ensure it's on the correct device
 
-    # Print model structure after potential quantization
-    # print("\nModel Structure (Post-Quantization if enabled):")
-    # print(model)
-    # print("-" * 50)
+    # Model Print for Verification
+    if args.print_model:
+        print("\n--- Model Structure ---")
+        print(model)
+        # Check if a specific known Conv2d layer was replaced (example for the first conv layer)
+        # Note: This check might be fragile depending on how quantization wraps layers
+        try:
+            # Check if the conv1 attribute is still a plain Conv2d or something else
+            if args.quantize and not isinstance(model.conv1, nn.Conv2d):
+                print("\nNote: model.conv1 seems modified by quantization (not plain nn.Conv2d).")
+            elif args.quantize:
+                print("\nWarning: model.conv1 still appears as nn.Conv2d after dynamic quantization (might be normal).")
+        except AttributeError:
+            print("\nCould not directly access model.conv1 for specific check.")
+        print("--- End Model Structure ---\n")
 
     # --- Load and Preprocess Input Image ---
     input_image = Image.open(args.input).convert("RGB")
@@ -182,29 +196,83 @@ if __name__ == "__main__":
     lr_tensor = preprocess(input_image).unsqueeze(0).to(device)
     print(f"Input tensor shape: {lr_tensor.shape}")
 
-    # --- Perform Monte Carlo Dropout Inference ---
+    # --- Perform Monte Carlo Dropout Inference with Profiling Option ---
     print(f"Running {args.mc_passes} MC Dropout passes...")
-    start_time = time.time()
     sr_passes = []
-    # model.eval() # Model should already be in eval mode from loading/quantization steps
+    total_model_call_time = 0.0  # Accumulator for model call duration
+    overall_start_time = time.time()  # Keep track of overall loop time
 
-    # Note: Even if the model is quantized, dropout layers need to be active
-    # The enable_dropout function handles this correctly.
+    # Make sure model is in eval mode before loop
+    # model.eval() # Already done
 
     for i in range(args.mc_passes):
-        enable_dropout(model)  # Ensure dropout layers are active
-        with torch.no_grad():
-            sr_out = model(lr_tensor)  # Use the (potentially quantized) model
-        # Move result to CPU to avoid accumulating GPU/CPU memory if running many passes
-        sr_passes.append(sr_out.cpu())
-        if (i + 1) % 5 == 0:
-            print(f"  Completed pass {i + 1}/{args.mc_passes}")
+        # --- Conditional Profiling for the first pass ---
+        if args.profile and i == 0:
+            print(f"\n--- Profiling Pass {i + 1} ---")
+            with torch.profiler.profile(
+                    activities=[torch.profiler.ProfilerActivity.CPU],  # Only CPU relevant here
+                    record_shapes=True,  # Optional: adds shape info
+                    profile_memory=True,  # Optional: adds memory info
+                    with_stack=True  # Optional: helps trace call stacks
+            ) as prof:
+                with torch.profiler.record_function("mc_dropout_pass"):  # Label the block
+                    enable_dropout(model)
+                    with torch.no_grad():
+                        iter_start_time = time.time()  # Can still time within profile
+                        sr_out = model(lr_tensor)
+                        iter_end_time = time.time()
+                        # Note: Timing within profiler might have slight overhead itself
+                        total_model_call_time += (iter_end_time - iter_start_time)
 
-    end_time = time.time()
-    # Calculate inference time per pass for comparison
-    time_per_pass = (end_time - start_time) / args.mc_passes
-    print(f"Inference finished. Average time per pass: {time_per_pass:.4f} seconds."
-          f" Total time elapsed {(end_time - start_time):.4f} seconds")
+            # Print profiler results after the profiled block
+            print(f"--- Profiler Results (Pass {i + 1}, Top 15 CPU Self Time) ---")
+            # Sort by self CPU time (time spent in the operator itself)
+            print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=15))
+            print("--- End Profiler Results ---\n")
+            # Optionally save full trace:
+            # profiler_filename = f"trace_{'quant' if args.quantize else 'fp32'}_{device}.json"
+            # try:
+            #     prof.export_chrome_trace(profiler_filename)
+            #     print(f"Profiler trace saved to {profiler_filename}")
+            # except Exception as e:
+            #     print(f"Could not save profiler trace: {e}")
+
+            # Append result (move to CPU if it wasn't already)
+            sr_passes.append(sr_out.cpu())
+
+        else:  # --- Run subsequent passes normally ---
+            if args.profile and i == 1:  # Add a note if profiling was skipped
+                print(f"--- Running remaining passes without profiling ---")
+
+            enable_dropout(model)
+            with torch.no_grad():
+                iter_start_time = time.time()
+                sr_out = model(lr_tensor)
+                iter_end_time = time.time()
+                total_model_call_time += (iter_end_time - iter_start_time)
+
+            sr_passes.append(sr_out.cpu())
+            if (i + 1) % 5 == 0:
+                print(f"  Completed pass {i + 1}/{args.mc_passes} (non-profiled)")
+        # --- End Conditional Profiling ---
+
+    # --- Loop finished ---
+    overall_end_time = time.time()
+    overall_duration = overall_end_time - overall_start_time
+
+    # --- Updated Timing Report ---
+    if args.mc_passes > 0:
+        avg_model_call_time_per_pass = total_model_call_time / args.mc_passes
+        avg_overall_time_per_pass = overall_duration / args.mc_passes
+        print(f"\nInference Timing Report:")
+        print(f"  Total time for loop execution: {overall_duration:.4f} seconds.")
+        print(f"  Total accumulated model call time: {total_model_call_time:.4f} seconds.")
+        print(f"  Average overall time per pass: {avg_overall_time_per_pass:.4f} seconds.")
+        print(f"  Average model call time per pass: {avg_model_call_time_per_pass:.4f} seconds.")
+    else:
+        print(f"\nInference Timing Report:")
+        print(f"  Total time for loop execution: {overall_duration:.4f} seconds. (No passes run)")
+        print(f"  Total accumulated model call time: {total_model_call_time:.4f} seconds.")
 
     # --- Aggregate Results ---
     stacked_sr = torch.stack(sr_passes, dim=0)
