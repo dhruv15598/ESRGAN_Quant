@@ -99,22 +99,32 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='ESRGAN Super-Resolution with Ensemble Uncertainty')
     parser.add_argument('--input', type=str, required=True, help='Path to the low-resolution input image')
     # --- Argument for the directory containing ensemble model subdirectories ---
-    parser.add_argument('--weights_dir', type=str, default='mySRGAN/model_weights_ensemble',
+    parser.add_argument('--weights_dir', type=str, default='model_weights_ensemble',
                         help='Path to the directory containing ensemble model folders (model1, model2, ...)')
-    parser.add_argument('--output_sr', type=str, default='output_ensemble_sr_ptdq.png',
+    parser.add_argument('--output_sr', type=str, default='output_ensemble_sr_gpu_DPTQ.png',
                         help='Path to save the super-resolved image')
-    parser.add_argument('--output_uq', type=str, default='output_ensemble_uq_heatmap_ptdq.png',
+    parser.add_argument('--output_uq', type=str, default='output_ensemble_uq_heatmap_gpu_DPTQ.png',
                         help='Path to save the uncertainty heatmap')
     parser.add_argument('--crop_size', type=int, default=None,
                         help='Optional size to center crop the input image (e.g., 200)')
+    parser.add_argument('--gpu', action='store_true', help='Attempt execution on GPU if available (overrides --cpu)')
     parser.add_argument('--cpu', action='store_true', help='Force use CPU even if CUDA is available')
     parser.add_argument('--quantize', action='store_true', help='Apply Post-Training Dynamic Quantization (forces CPU)')
 
     args = parser.parse_args()
 
-    # Setup device
-    use_cuda = torch.cuda.is_available() and not args.cpu
-    device = torch.device("cuda" if use_cuda else "cpu")
+    # --- Device Setup ---
+    if args.gpu:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            print("Warning: --gpu flag specified, but CUDA is not available. Falling back to CPU.")
+            device = torch.device("cpu")
+    elif args.cpu:  # Check if --cpu flag forces CPU
+        device = torch.device("cpu")
+    else:  # Default: Use CUDA if available, else CPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print(f"Using device: {device}")
 
     # --- Find ensemble model weight files ---
@@ -143,7 +153,7 @@ if __name__ == "__main__":
         if args.quantize:
             print(f"  Applying Dynamic Quantization to Member {i + 1}...")
             # Ensure model is on CPU for dynamic quantization step
-            fp32_model.to('cpu')
+            #fp32_model.to('cpu')
             layers_to_quantize = {nn.Conv2d}
             quantized_model = torch.quantization.quantize_dynamic(
                 model=fp32_model,

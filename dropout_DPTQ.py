@@ -107,30 +107,30 @@ if __name__ == "__main__":
     parser.add_argument('--input', type=str, required=True, help='Path to the low-resolution input image')
     parser.add_argument('--weights', type=str, default='gen174.pth.tar', help='Path to the generator weights file')
     # Modified default output filenames
-    parser.add_argument('--output_sr', type=str, default='output_sr_ptdq.png',
+    parser.add_argument('--output_sr', type=str, default='output_dropout_sr_gpu.png',
                         help='Path to save the super-resolved image')
-    parser.add_argument('--output_uq', type=str, default='output_uq_heatmap_ptdq.png',
+    parser.add_argument('--output_uq', type=str, default='output_dropout_uq_heatmap_gpu.png',
                         help='Path to save the uncertainty heatmap')
     parser.add_argument('--mc_passes', type=int, default=2, help='Number of Monte Carlo dropout passes')
     parser.add_argument('--crop_size', type=int, default=None,
                         help='Optional size to center crop the input image (e.g., 200)')
     parser.add_argument('--cpu', action='store_true', help='Force use CPU even if CUDA is available')
+    parser.add_argument('--gpu', action='store_true', help='Attempt execution on GPU if available (overrides --cpu)')
     # Add quantization argument
     parser.add_argument('--quantize', action='store_true', help='Apply Post-Training Dynamic Quantization (forces CPU)')
-    parser.add_argument('--print_model', action='store_true', help='Print the model structure after setup')
-    parser.add_argument('--profile', action='store_true', help='Enable profiler for the first inference pass')
     args = parser.parse_args()
 
     # --- Device Setup ---
-    # Force CPU if quantization is enabled, as PTDQ is primarily optimized for CPU
-    if args.quantize:
-        if not args.cpu:
-            print("Quantization enabled, forcing execution on CPU.")
+    if args.gpu:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            print("Warning: --gpu flag specified, but CUDA is not available. Falling back to CPU.")
+            device = torch.device("cpu")
+    elif args.cpu:  # Check if --cpu flag forces CPU
         device = torch.device("cpu")
-    else:
-        use_cuda = torch.cuda.is_available() and not args.cpu
-        device = torch.device("cuda" if use_cuda else "cpu")
-    print(f"Using device: {device}")
+    else:  # Default: Use CUDA if available, else CPU
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --- Instantiate and Load Model ---
     # Instantiate the FP32 model first
@@ -143,11 +143,10 @@ if __name__ == "__main__":
     fp32_model = load_weights(args.weights, fp32_model, device)  # Load to target device initially
     fp32_model.eval()  # Set to eval mode initially
 
-
     # --- Apply Dynamic Quantization (if enabled) ---
     if args.quantize:
         print("Applying Post-Training Dynamic Quantization...")
-        fp32_model.to('cpu')
+        #fp32_model.to('cpu')
         # Define layers to quantize dynamically (usually Linear, sometimes Conv2d).
         # Let's try targeting Conv2d as they are dominant in ESRGAN generator.
         layers_to_quantize = {nn.Conv2d}  # Or potentially {nn.Linear, nn.Conv2d} if Linear layers were present
@@ -168,25 +167,10 @@ if __name__ == "__main__":
         model = fp32_model
         model.to(device)  # Ensure it's on the correct device
 
-    # Model Print for Verification
-    if args.print_model:
-        print("\n--- Model Structure ---")
-        print(model)
-        # Check if a specific known Conv2d layer was replaced (example for the first conv layer)
-        # Note: This check might be fragile depending on how quantization wraps layers
-        try:
-            # Check if the conv1 attribute is still a plain Conv2d or something else
-            if args.quantize and not isinstance(model.conv1, nn.Conv2d):
-                print("\nNote: model.conv1 seems modified by quantization (not plain nn.Conv2d).")
-            elif args.quantize:
-                print("\nWarning: model.conv1 still appears as nn.Conv2d after dynamic quantization (might be normal).")
-        except AttributeError:
-            print("\nCould not directly access model.conv1 for specific check.")
-        print("--- End Model Structure ---\n")
-
     # --- Load and Preprocess Input Image ---
     input_image = Image.open(args.input).convert("RGB")
     transform_list = []
+
     if args.crop_size and args.crop_size > 0:
         print(f"Applying center crop of size ({args.crop_size}, {args.crop_size})")
         transform_list.append(transforms.CenterCrop((args.crop_size, args.crop_size)))
@@ -196,65 +180,29 @@ if __name__ == "__main__":
     lr_tensor = preprocess(input_image).unsqueeze(0).to(device)
     print(f"Input tensor shape: {lr_tensor.shape}")
 
-    # --- Perform Monte Carlo Dropout Inference with Profiling Option ---
+    # --- Perform Monte Carlo Dropout Inference ---
     print(f"Running {args.mc_passes} MC Dropout passes...")
     sr_passes = []
     total_model_call_time = 0.0  # Accumulator for model call duration
     overall_start_time = time.time()  # Keep track of overall loop time
 
     # Make sure model is in eval mode before loop
-    # model.eval() # Already done
+    model.eval() # Already done
 
     for i in range(args.mc_passes):
-        # --- Conditional Profiling for the first pass ---
-        if args.profile and i == 0:
-            print(f"\n--- Profiling Pass {i + 1} ---")
-            with torch.profiler.profile(
-                    activities=[torch.profiler.ProfilerActivity.CPU],  # Only CPU relevant here
-                    record_shapes=True,  # Optional: adds shape info
-                    profile_memory=True,  # Optional: adds memory info
-                    with_stack=True  # Optional: helps trace call stacks
-            ) as prof:
-                with torch.profiler.record_function("mc_dropout_pass"):  # Label the block
-                    enable_dropout(model)
-                    with torch.no_grad():
-                        iter_start_time = time.time()  # Can still time within profile
-                        sr_out = model(lr_tensor)
-                        iter_end_time = time.time()
-                        # Note: Timing within profiler might have slight overhead itself
-                        total_model_call_time += (iter_end_time - iter_start_time)
+        enable_dropout(model)  # Ensure dropout layers are active for this pass
+        with torch.no_grad():
+            # Time only the model call
+            iter_start_time = time.time()
+            sr_out = model(lr_tensor)  # Use the (potentially quantized) model
+            iter_end_time = time.time()
+            total_model_call_time += (iter_end_time - iter_start_time)
+            # --- Timing ends ---
 
-            # Print profiler results after the profiled block
-            print(f"--- Profiler Results (Pass {i + 1}, Top 15 CPU Self Time) ---")
-            # Sort by self CPU time (time spent in the operator itself)
-            print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=15))
-            print("--- End Profiler Results ---\n")
-            # Optionally save full trace:
-            # profiler_filename = f"trace_{'quant' if args.quantize else 'fp32'}_{device}.json"
-            # try:
-            #     prof.export_chrome_trace(profiler_filename)
-            #     print(f"Profiler trace saved to {profiler_filename}")
-            # except Exception as e:
-            #     print(f"Could not save profiler trace: {e}")
-
-            # Append result (move to CPU if it wasn't already)
-            sr_passes.append(sr_out.cpu())
-
-        else:  # --- Run subsequent passes normally ---
-            if args.profile and i == 1:  # Add a note if profiling was skipped
-                print(f"--- Running remaining passes without profiling ---")
-
-            enable_dropout(model)
-            with torch.no_grad():
-                iter_start_time = time.time()
-                sr_out = model(lr_tensor)
-                iter_end_time = time.time()
-                total_model_call_time += (iter_end_time - iter_start_time)
-
-            sr_passes.append(sr_out.cpu())
-            if (i + 1) % 5 == 0:
-                print(f"  Completed pass {i + 1}/{args.mc_passes} (non-profiled)")
-        # --- End Conditional Profiling ---
+        # Move result to CPU after timing
+        sr_passes.append(sr_out.cpu())
+        if (i + 1) % 5 == 0:
+            print(f"  Completed pass {i + 1}/{args.mc_passes}")
 
     # --- Loop finished ---
     overall_end_time = time.time()
@@ -281,7 +229,7 @@ if __name__ == "__main__":
     uncertainty_map = torch.mean(std_sr, dim=1)
 
     # --- Save Outputs ---
-    #save_tensor_as_image(mean_sr, args.output_sr)
-    #save_std_heatmap(uncertainty_map, args.output_uq, colormap='viridis')
+    save_tensor_as_image(mean_sr, args.output_sr)
+    save_std_heatmap(uncertainty_map, args.output_uq, colormap='viridis')
 
     print("\nProcessing complete.")
